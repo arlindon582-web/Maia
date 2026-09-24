@@ -1,0 +1,62 @@
+#include <OneWire.h>
+#include <DallasTemperature.h>
+
+// --- Configuração dos Pinos no Arduino Nano ---
+#define LED_PIN      2   // Pino Digital D2 (ligado ao LED verde)
+#define ONE_WIRE_BUS 4   // Pino Digital D4 (para o DS18B20)
+#define TURB_PIN     A0  // Pino Analógico A0 (para a Turbidez)
+
+// Setup das instâncias de sensores
+OneWire oneWire(ONE_WIRE_BUS);
+DallasTemperature sensors(&oneWire);
+
+void setup() {
+  // Inicializa a comunicação serial a 115200 bps com a TV Box
+  Serial.begin(115200);
+  
+  // Configura pino do LED
+  pinMode(LED_PIN, OUTPUT);
+  digitalWrite(LED_PIN, LOW);
+  
+  // Inicializa a biblioteca do sensor de temperatura
+  sensors.begin();
+}
+
+void loop() {
+  // Lógica de tempo não-bloqueante (Leitura a cada 2 segundos)
+  static unsigned long lastMsg = 0;
+  if (millis() - lastMsg > 2000) {
+    lastMsg = millis();
+
+    // 1. Leitura do DS18B20
+    sensors.requestTemperatures();
+    float tempC = sensors.getTempCByIndex(0);
+
+    // 2. Leitura do Sensor de Turbidez
+    int turbidezRaw = analogRead(TURB_PIN);
+
+    // Validação básica do sensor de temperatura
+    if (tempC == DEVICE_DISCONNECTED_C) {
+      Serial.println("ERRO:DS18B20_DESCONECTADO");
+      return;
+    }
+    
+    // --- ENVIO SIMPLIFICADO PARA A TV BOX ---
+    // Formato enviado pela USB: TEMP,TURBIDEZ
+    Serial.print(tempC);
+    Serial.print(",");
+    Serial.println(turbidezRaw);
+  }
+
+  // --- ESCUTA COMANDOS DA TV BOX PARA O LED ---
+  if (Serial.available() > 0) {
+    String comando = Serial.readStringUntil('\n');
+    comando.trim(); // Remove espaços ou quebras de linha
+
+    if (comando == "ON") {
+      digitalWrite(LED_PIN, HIGH);
+    } else if (comando == "OFF") {
+      digitalWrite(LED_PIN, LOW);
+    }
+  }
+}
