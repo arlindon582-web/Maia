@@ -1,0 +1,83 @@
+import serial
+import paho.mqtt.client as mqtt
+import ssl
+import time
+
+# --- Configurações ---
+SERIAL_PORT = "/dev/ttyUSB0"  # Confirme se é esta a porta do seu Nano
+BAUD_RATE = 115200
+
+MQTT_BROKER = "b8f97f54560a45f8ae04c7624c7d7cd4.s1.eu.hivemq.cloud"
+MQTT_PORT = 8883
+MQTT_USER = "ufrb.maia.esp"
+MQTT_PASSWORD = "Ma1a@hivemq"
+
+TOPIC_TEMP = "esp8266/temperature"
+TOPIC_TURB = "esp8266/turbidez"
+TOPIC_LED = "esp8266/led"
+
+# --- Conexão Serial ---
+try:
+    arduino = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=1)
+    print(f"🔌 Conectado ao Arduino na porta {SERIAL_PORT}")
+except Exception as e:
+    print(f"❌ Erro na Serial: Não foi possível abrir {SERIAL_PORT}")
+    exit()
+
+# --- Callbacks do MQTT ---
+def on_connect(client, userdata, flags, rc):
+    if rc == 0:
+        print("🌐 Conectado à Nuvem do HiveMQ!")
+        client.subscribe(TOPIC_LED) # Escuta os comandos do celular para o LED
+    else:
+        print(f"Falha na conexão. Código: {rc}")
+
+def on_message(client, userdata, msg):
+    comando = msg.payload.decode()
+    print(f"📥 Recebido do Celular [{msg.topic}]: {comando}")
+    
+    # Se o celular mandar ON/OFF, repassamos para o Nano via cabo USB
+    if msg.topic == TOPIC_LED and comando in ["ON", "OFF"]:
+        arduino.write((comando + '\n').encode())
+
+# --- Setup do Cliente MQTT ---
+client = mqtt.Client(client_id="TVBox_MonteSanto_Gateway")
+client.username_pw_set(MQTT_USER, MQTT_PASSWORD)
+client.tls_set(tls_version=ssl.PROTOCOL_TLS) # Exigência da porta 8883
+
+client.on_connect = on_connect
+client.on_message = on_message
+
+print("⏳ Conectando ao servidor...")
+client.connect(MQTT_BROKER, MQTT_PORT, 60)
+client.loop_start() # Roda a rede em segundo plano
+
+print("📡 Aguardando dados dos sensores...")
+
+# --- Loop Principal (Lendo USB e Mandando pra Nuvem) ---
+try:
+    while True:
+        if arduino.in_waiting > 0:
+            linha = arduino.readline().decode('utf-8').strip()
+            
+            # Evita linhas vazias ou mensagens de erro do Nano
+            if linha and not linha.startswith("ERRO"):
+                try:
+                    # Quebra o texto "24.50,412" em duas variáveis
+                    partes = linha.split(',')
+                    if len(partes) == 2:
+                        temp = partes[0]
+                        turb = partes[1]
+                        
+                        print(f"📤 Publicando -> Temp: {temp}°C | Turbidez: {turb}")
+                        client.publish(TOPIC_TEMP, temp)
+                        client.publish(TOPIC_TURB, turb)
+                except Exception as e:
+                    print(f"Erro ao processar pacote: {e}")
+        
+        time.sleep(0.1) # Pausa rápida para não fritar o processador da TV Box
+
+except KeyboardInterrupt:
+    print("\n🛑 Encerrando o sistema...")
+    client.loop_stop()
+    arduino.close()
