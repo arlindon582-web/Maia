@@ -1,9 +1,11 @@
 #include <OneWire.h>
 #include <DallasTemperature.h>
 
-#define LED_PIN      2   // Pino D2
-#define ONE_WIRE_BUS 4   // Pino D4 (DS18B20)
-#define TURB_PIN     A0  // Pino A0 (Turbidez)
+#define LED_PIN      12   
+#define ONE_WIRE_BUS 11   // DS18B20 (Temperatura)
+#define TURB_PIN     A0  // Turbidez
+#define PH_PIN       A1  // Sensor de pH
+#define TDS_PIN      A2  // Sensor de TDS
 
 OneWire oneWire(ONE_WIRE_BUS);
 DallasTemperature sensors(&oneWire);
@@ -17,25 +19,35 @@ void setup() {
 
 void loop() {
   static unsigned long lastMsg = 0;
-  // Acelerei para 1 segundo para o debug ficar mais dinâmico
+  
   if (millis() - lastMsg > 1000) {
     lastMsg = millis();
 
-    // Leitura DS18B20
+    // 1. Temperatura
     sensors.requestTemperatures();
     float tempC = sensors.getTempCByIndex(0);
 
-    // Leitura Turbidez
+    // 2. Turbidez (Leitura Bruta 0-1023)
     int turbidezRaw = analogRead(TURB_PIN);
 
-    // Envio "cru" (formato: TEMP,TURBIDEZ)
-    // Se estiver desconectado, envia -127.00 que é o erro padrão
+    // 3. pH (Leitura Bruta 0-1023)
+    int phRaw = analogRead(PH_PIN);
+
+    // 4. TDS (Leitura Bruta 0-1023)
+    int tdsRaw = analogRead(TDS_PIN);
+
+    // Envio "cru" no formato: TEMP,TURBIDEZ,PH,TDS
+    Serial.print("Temp: ");
     Serial.print(tempC);
-    Serial.print(",");
-    Serial.println(turbidezRaw);
+    Serial.print(", Turb: ");
+    Serial.print(turbidezRaw);
+    Serial.print(", Ph: ");
+    Serial.print(phRaw);
+    Serial.print(", TDS: ");
+    Serial.println(tdsRaw);
   }
 
-  // --- Comando do LED via USB ---
+  // Comandos LED via USB
   if (Serial.available() > 0) {
     String comando = Serial.readStringUntil('\n');
     comando.trim();
