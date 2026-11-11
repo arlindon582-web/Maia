@@ -2,11 +2,9 @@ import serial
 import paho.mqtt.client as mqtt
 import ssl
 import time
+import sys
 
-# --- Configurações ---
-SERIAL_PORT = "/dev/ttyUSB0"  # Confirme se é esta a porta do seu Nano
-BAUD_RATE = 115200
-
+# --- Credenciais e Tópicos do MAIA / HiveMQ ---
 MQTT_BROKER = "b8f97f54560a45f8ae04c7624c7d7cd4.s1.eu.hivemq.cloud"
 MQTT_PORT = 8883
 MQTT_USER = "ufrb.maia.esp"
@@ -16,66 +14,75 @@ TOPIC_TEMP = "esp8266/temperature"
 TOPIC_TURB = "esp8266/turbidez"
 TOPIC_LED = "esp8266/led"
 
-# --- Conexão Serial ---
+# --- 1. SELEÇÃO DE PORTA SERIAL (Cross-Platform) ---
+print("=== GATEWAY MAIA (PYTHON) ===")
+print("Dica: No Windows use 'COM3', 'COM5'. No Linux use '/dev/ttyUSB0' ou '/dev/ttyACM0'")
+SERIAL_PORT = input("Digite a porta do Arduino Nano: ").strip()
+BAUD_RATE = 115200
+
 try:
     arduino = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=1)
     print(f"🔌 Conectado ao Arduino na porta {SERIAL_PORT}")
 except Exception as e:
-    print(f"❌ Erro na Serial: Não foi possível abrir {SERIAL_PORT}")
-    exit()
+    print(f"❌ Erro Crítico: Não foi possível abrir a porta {SERIAL_PORT}")
+    print("Verifique se a Arduino IDE / Monitor Serial não está com a porta aberta!")
+    sys.exit()
 
-# --- Callbacks do MQTT ---
+# --- 2. COMUNICAÇÃO MQTT ---
 def on_connect(client, userdata, flags, rc):
     if rc == 0:
-        print("🌐 Conectado à Nuvem do HiveMQ!")
-        client.subscribe(TOPIC_LED) # Escuta os comandos do celular para o LED
+        print("🌐 Conectado com Sucesso à Nuvem do HiveMQ!")
+        client.subscribe(TOPIC_LED) 
+        print(f"👂 Escutando comandos do app MAIA no tópico: {TOPIC_LED}")
     else:
-        print(f"Falha na conexão. Código: {rc}")
+        print(f"⚠️ Falha na conexão ao HiveMQ. Código: {rc}")
 
 def on_message(client, userdata, msg):
     comando = msg.payload.decode()
-    print(f"📥 Recebido do Celular [{msg.topic}]: {comando}")
+    print(f"\n📱 Recebido do App [{msg.topic}]: {comando}")
     
-    # Se o celular mandar ON/OFF, repassamos para o Nano via cabo USB
     if msg.topic == TOPIC_LED and comando in ["ON", "OFF"]:
+        print(f"-> Repassando comando '{comando}' para o Arduino...")
+        # Envia comando com \n para o Arduino C++ ler via Serial.readStringUntil
         arduino.write((comando + '\n').encode())
 
-# --- Setup do Cliente MQTT ---
-client = mqtt.Client(client_id="TVBox_MonteSanto_Gateway")
+client = mqtt.Client(client_id="Python_Gateway_Notebook")
 client.username_pw_set(MQTT_USER, MQTT_PASSWORD)
-client.tls_set(tls_version=ssl.PROTOCOL_TLS) # Exigência da porta 8883
+client.tls_set(tls_version=ssl.PROTOCOL_TLS) 
 
 client.on_connect = on_connect
 client.on_message = on_message
 
-print("⏳ Conectando ao servidor...")
+print("⏳ Negociando conexão TLS com HiveMQ...")
 client.connect(MQTT_BROKER, MQTT_PORT, 60)
-client.loop_start() # Roda a rede em segundo plano
+client.loop_start() 
 
-print("📡 Aguardando dados dos sensores...")
-
-# --- Loop Principal (Lendo USB e Mandando pra Nuvem) ---
+# --- 3. PROCESSAMENTO DOS DADOS (O Caminho 2) ---
+print("\n📡 Aguardando dados brutos dos sensores...")
 try:
     while True:
         if arduino.in_waiting > 0:
+            # Lê a linha bruta (ex: "25.50,412")
             linha = arduino.readline().decode('utf-8').strip()
             
-            # Evita linhas vazias ou mensagens de erro do Nano
-            if linha and not linha.startswith("ERRO"):
+            if linha:
                 try:
-                    # Quebra o texto "24.50,412" em duas variáveis
+                    # O Python "Inteligente" corta a linha na vírgula
                     partes = linha.split(',')
                     if len(partes) == 2:
-                        temp = partes[0]
-                        turb = partes[1]
+                        temp_str = partes[0]
+                        turb_str = partes[1]
                         
-                        print(f"📤 Publicando -> Temp: {temp}°C | Turbidez: {turb}")
-                        client.publish(TOPIC_TEMP, temp)
-                        client.publish(TOPIC_TURB, turb)
+                        # Exibe no terminal para debug
+                        print(f"📤 Publicando separadamente -> 🌡️ {temp_str}°C | 💧 Turbidez: {turb_str}")
+                        
+                        # Publica nos canais individuais (Ideal para gráficos)
+                        client.publish(TOPIC_TEMP, temp_str)
+                        client.publish(TOPIC_TURB, turb_str)
                 except Exception as e:
-                    print(f"Erro ao processar pacote: {e}")
+                    print(f"⚠️ Ignorando pacote mal formado: {linha}")
         
-        time.sleep(0.1) # Pausa rápida para não fritar o processador da TV Box
+        time.sleep(0.1)
 
 except KeyboardInterrupt:
     print("\n🛑 Encerrando o sistema...")
