@@ -10,11 +10,14 @@ MQTT_PORT = 8883
 MQTT_USER = "ufrb.maia.esp"
 MQTT_PASSWORD = "Ma1a@hivemq"
 
+# Novos tópicos para os sensores adicionais
 TOPIC_TEMP = "esp8266/temperature"
 TOPIC_TURB = "esp8266/turbidez"
+TOPIC_PH = "esp8266/ph"
+TOPIC_TDS = "esp8266/tds"
 TOPIC_LED = "esp8266/led"
 
-# --- 1. SELEÇÃO DE PORTA SERIAL (Cross-Platform) ---
+# --- 1. SELEÇÃO DE PORTA SERIAL ---
 print("=== GATEWAY MAIA (PYTHON) ===")
 print("Dica: No Windows use 'COM3', 'COM5'. No Linux use '/dev/ttyUSB0' ou '/dev/ttyACM0'")
 SERIAL_PORT = input("Digite a porta do Arduino Nano: ").strip()
@@ -43,7 +46,6 @@ def on_message(client, userdata, msg):
     
     if msg.topic == TOPIC_LED and comando in ["ON", "OFF"]:
         print(f"-> Repassando comando '{comando}' para o Arduino...")
-        # Envia comando com \n para o Arduino C++ ler via Serial.readStringUntil
         arduino.write((comando + '\n').encode())
 
 client = mqtt.Client(client_id="Python_Gateway_Notebook")
@@ -57,30 +59,36 @@ print("⏳ Negociando conexão TLS com HiveMQ...")
 client.connect(MQTT_BROKER, MQTT_PORT, 60)
 client.loop_start() 
 
-# --- 3. PROCESSAMENTO DOS DADOS (O Caminho 2) ---
-print("\n📡 Aguardando dados brutos dos sensores...")
+# --- 3. PROCESSAMENTO DOS DADOS MULTISENSOR ---
+print("\n📡 Aguardando dados dos 4 sensores...")
 try:
     while True:
         if arduino.in_waiting > 0:
-            # Lê a linha bruta (ex: "25.50,412")
+            # Lê a linha completa enviada pelo Arduino
             linha = arduino.readline().decode('utf-8').strip()
             
             if linha:
                 try:
-                    # O Python "Inteligente" corta a linha na vírgula
+                    # Exemplo esperado da linha: "Temp: 21.56, Turb: 594, Ph: 383, TDS: 1"
+                    # O Arduino envia o formato amigável, então o Python vai extrair apenas os números
+                    
                     partes = linha.split(',')
-                    if len(partes) == 2:
-                        temp_str = partes[0]
-                        turb_str = partes[1]
+                    if len(partes) == 4:
+                        # Extrai os valores numéricos pegando tudo após os dois pontos (":")
+                        temp_str = partes[0].split(':')[1].strip()
+                        turb_str = partes[1].split(':')[1].strip()
+                        ph_str = partes[2].split(':')[1].strip()
+                        tds_str = partes[3].split(':')[1].strip()
                         
-                        # Exibe no terminal para debug
-                        print(f"📤 Publicando separadamente -> 🌡️ {temp_str}°C | 💧 Turbidez: {turb_str}")
+                        print(f"📤 Publicando: 🌡️ Temp={temp_str}°C | 💧 Turbidez={turb_str} | 🧪 pH={ph_str} | 🧂 TDS={tds_str}")
                         
-                        # Publica nos canais individuais (Ideal para gráficos)
+                        # Publica nos canais individuais
                         client.publish(TOPIC_TEMP, temp_str)
                         client.publish(TOPIC_TURB, turb_str)
+                        client.publish(TOPIC_PH, ph_str)
+                        client.publish(TOPIC_TDS, tds_str)
                 except Exception as e:
-                    print(f"⚠️ Ignorando pacote mal formado: {linha}")
+                    print(f"⚠️ Erro ao decodificar a linha '{linha}': {e}")
         
         time.sleep(0.1)
 
